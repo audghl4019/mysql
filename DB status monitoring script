@@ -1,0 +1,283 @@
+#!/usr/bin/perl 
+ 
+use DBI; 
+ 
+#print 'Enter host for connect: '; chomp(my $host = <STDIN>); 
+#print 'Enter user for connect: '; chomp(my $user = <STDIN>); 
+#print "Enter passwd for : "; chomp(my $pw = <STDIN>); 
+#print "socket for : "; chomp(my $socket = <STDIN>); 
+
+#####Variables######
+my $host = 'localhost';
+my $user = 'root';
+my $pw = 'qkraudghl';
+my $socket = '/tmp/mysql.sock'; 
+
+#######DML##########
+ 
+my $start= 'mysql'; 
+my $dbh = DBI->connect("DBI:mysql:$start;host=$host;mysql_socket=$socket", $user, $pw,{ RaiseError => 1 }); 
+ 
+ 
+ 
+ 
+#my $qUseTablespace='SELECT table_schema, SUM((data_length+index_length)/1024/1024) MB FROM information_schema.tables GROUP BY 1'; 
+#my $sth=$dbh->prepare($qUseTablespace); 
+#$sth->execute; 
+ 
+ 
+ 
+print "##################################################################\n";
+print "#                KTDS Monitoring (WRITE HULK)                    #\n";
+print "##################################################################\n"; 
+print "\n";
+
+print "############################PROCESSLIST###########################\n";
+####PROCESSLIST
+my $sess_query;
+my $ret;
+
+   $sess_query = 'SELECT * FROM information_schema.processlist WHERE user NOT IN ("admin","repl","agent","system user") ORDER BY TIME DESC LIMIT 5';
+   #$ret = `mysql -u$user -p$pw -e "$sess_query"`;
+$ret=$dbh->prepare($sess_query);
+$ret->execute;
+
+
+
+while (my $row = $ret->fetchrow_hashref) {
+   print "USER: $row->{USER}\t\t  COMMAND:$row->{COMMAND}\t\tTIME:$row->{TIME}\t\t   STATE:$row->{STATE}\t\t  INFO:$row->{INFO} \n";
+}
+
+#print "------------------MariaDB tablespace Use--------------------------\n"; 
+#while (my $aref = $sth->fetchrow_arrayref) { 
+#print "\n". $aref->[0] .":\t\t". (sprintf "%.2f",($aref->[1])) . "(MB)\n"; 
+#} 
+
+ 
+my $sth=$dbh->prepare(q{SHOW GLOBAL variables}); 
+$sth->execute; 
+my %hash; 
+while( my( $item, $quantity ) = $sth->fetchrow_array() ) { 
+$hash{ $item } = $quantity; 
+} 
+ 
+ 
+#### CPU/MEMORY INFORMATIO ################
+    my $cpu_usage = `top -n 1 -b | grep -i cpu\\(s\\) | awk '{print \$5}' | tr -d "%id," | awk '{print 100-\$1}'`;
+    my $mem_info = `free -m | grep "Mem:" | awk '{print \$2, \$4,\$7}'`;
+ 
+    chomp ( $cpu_usage );
+    chomp ( $mem_info );
+ 
+    my @mem = split / /, $mem_info;
+ 
+    my $mem_total = $mem[0];
+    my $mem_free = $mem[1] + $mem[2];
+    my $mem_used = $mem_total - $mem_free;
+    my $mem_usage = sprintf ( "%.1f", $mem_used / $mem_total * 100 );
+
+print "-----------------------System Resourece---------------------------\n"; 
+print "CPU Usage : $cpu_usage     DB Mem_Usage : $mem_usage\n";
+
+#### Get variable value ################### 
+$max_conn = sprintf "%.3f",($hash{'max_connections'}) ; 
+ 
+ 
+ 
+ 
+my $sth=$dbh->prepare(q{SHOW GLOBAL STATUS}); 
+$sth->execute; 
+my %hash; 
+while( my( $item, $quantity ) = $sth->fetchrow_array() ) { 
+$hash{ $item } = $quantity; 
+} 
+ 
+ 
+#### Get status value ################### 
+$QPS = sprintf "%.3f",($hash{'Queries'} / $hash{'Uptime'}) ; # QPS (Queries) / Uptime 
+$SQuery = sprintf "%.3f",($hash{'Slow_queries'} / $hash{'Uptime'}) ; # Slow_queries / Uptime 
+$AClient = sprintf "%.3f",($hash{'Aborted_clients'} / $hash{'Uptime'}) ; # Aborted_clients / Uptime 
+$InHitration = sprintf "%.2f",(1-$hash{'Innodb_buffer_pool_reads'} / $hash{'Innodb_buffer_pool_read_requests'}) *100 ; # innodb hit(%) 
+#$MyHitration = sprintf "%.2f",($hash{'Key_reads'} / $hash{'Key_read_requests'})*100 ; # myism hit(%) 
+$AbotConn = sprintf "%.2f",($hash{'Aborted_connects'} / $hash{'Connections'}) * 100 ; # Abort connect(%) 
+$MaxUsedConn = sprintf "%.2f",($hash{'Max_used_connections'}) ; # max connection 
+$Lock_wait = sprintf "%.2f", ($hash{'Table_locks_waited'} / ($hash{'Table_locks_immediate'} + $hash{'Table_locks_waited'})) *100 ; # lock wait 
+$Created_tmp = sprintf "%.2f", ($hash{'Created_tmp_disk_tables'} / ($hash{'Created_tmp_disk_tables'} + $hash{'Created_tmp_tables'})) *100 ; # Create_tmp 
+$Deadlocks = sprintf "%.2f", $hash{'Innodb_deadlocks'} ; 
+$current_session = sprintf "%.2f", $hash{'Threads_connected'};
+$active_session = sprintf "%.2f", $hash{'Threads_running'};
+
+#### Status value Print ################## 
+print "\n"; 
+print "\n"; 
+print "-------------------------MariaDB Monitor starting-----------------\n"; 
+print "\nQueries per second avg : $QPS "; # QPS 
+print "\nSlow_queries avg : $SQuery "; if ($SQuery > 1 ) { print " CHECKED "; } # Slow_queries 
+print "\nAborted_clients avg : $AClient "; # Aborted_clients 
+print "\nInnodb hitration(%) : $InHitration(%) "; if ($InHitration < 50) { print " CHECKED "; } # innodb hitration 
+print "\nMyIsm hitration(%) : $MyHitration(%) "; if ($MyHitration < 50) { print " CHECKED "; } # Myisam hitration 
+print "\nLock_wait(%) : $Lock_wait(%) "; if ($Lock_wait > 90) { print " CHECKED "; } # lock wait(%) 
+print "\nCreated_tmp_disk(%) : $Created_tmp(%) "; if ($Created_tmp > 90) { print " CHECKED "; } # create_tmp_disk 
+print "\nInnodb_deadlocks avg : $Deadlocks "; 
+
+print "\n";
+print "\n";
+print "--------------------------MariaDB session-------------------------\n";
+print "\nAborted_Connect(%) : $AbotConn(%) "; if ($$AbotConn > 10) { print " CHECKED "; } # abort connect(%) 
+#print "\nMax_Connected : $MaxUsedConn "; if ($MaxUsedConn > $max_conn - 100) { print " CHECKED "; } # max connect(%) 
+print "\nMax_Connected : $MaxUsedConn(Status) : $max_conn(Limit) "; if ($MaxUsedConn > $max_conn - 100) { print " CHECKED "; } # max connect(%) 
+print "\ncurrent_session : $current_session";
+print "\nActive_session : $active_session "; if ($active_session > 10) { print " CHECKED "; }  # active session
+
+### ETC Information ########
+print "\n"; #DB instance layer user session count
+ 
+print "\n"; 
+ 
+#######REALTIME DML COUNT########
+
+print "-------------------------Transaction DML Count-------------------\n";
+my $dbname = 'dashboard';
+my $tmp_file = '/tmp/.mysql_dml';
+
+#
+# TRACK ITMES
+#
+my $tup_select;
+my $tup_insert;
+my $tup_update;
+my $tup_delete;
+
+my $cur_tup_select;
+my $cur_tup_insert;
+my $cur_tup_update;
+my $cur_tup_delete;
+
+my $prev_tup_select;
+my $prev_tup_insert;
+my $prev_tup_update;
+my $prev_tup_delete;
+
+my $replace_title1;
+
+&main ();
+
+sub main
+{
+
+    &get_prev_dml ();
+    &get_dml ();
+    &write_prev_dml();
+    
+    $tup_select = $cur_tup_select - $prev_tup_select;
+    $tup_insert = $cur_tup_insert - $prev_tup_insert;
+    $tup_update = $cur_tup_update - $prev_tup_update;
+    $tup_delete = $cur_tup_delete - $prev_tup_delete;
+
+my $sum = $tup_insert + $tup_update + $tup_delete;
+    print "INSERT : $tup_insert\n";
+    print "UPDATE : $tup_update\n";
+    print "DELETE : $tup_delete\n";
+    print "SELECT : $tup_select\n";
+    print "WRITE_DML : $sum";
+    print "\n";
+
+    exit;
+}
+
+sub get_dml
+{
+#    my $res = `mysql -uroot -pqkraudghl  -e "SELECT 
+#(SELECT variable_value
+#FROM information_schema.GLOBAL_STATUS 
+#WHERE VARIABLE_NAME='COM_SELECT') AS COM_SELECT,
+#(SELECT variable_value
+#FROM information_schema.GLOBAL_STATUS 
+#WHERE VARIABLE_NAME='COM_UPDATE') AS COM_UPDATE,
+#(SELECT variable_value
+#FROM information_schema.GLOBAL_STATUS 
+#WHERE VARIABLE_NAME='COM_INSERT') AS COM_INSERT,
+#(SELECT variable_value
+#FROM information_schema.GLOBAL_STATUS 
+#WHERE VARIABLE_NAME='COM_DELETE') AS COM_DELETE";`;
+
+$res=$dbh->prepare('SELECT 
+(SELECT variable_value
+FROM information_schema.GLOBAL_STATUS 
+WHERE VARIABLE_NAME="COM_SELECT") AS COM_SELECT,
+(SELECT variable_value
+FROM information_schema.GLOBAL_STATUS 
+WHERE VARIABLE_NAME="COM_UPDATE") AS COM_UPDATE,
+(SELECT variable_value
+FROM information_schema.GLOBAL_STATUS 
+WHERE VARIABLE_NAME="COM_INSERT") AS COM_INSERT,
+(SELECT variable_value
+FROM information_schema.GLOBAL_STATUS 
+WHERE VARIABLE_NAME="COM_DELETE") AS COM_DELETE');
+$res->execute;
+
+while (my $aref = $res->fetchrow_arrayref) {
+#print "\n". $aref->[0] .":\t\t". (sprintf "%.2f",($aref->[1])) . "(MB)\n";
+#print "\n insert:". $aref->[0] . "\t\t update:";
+#print "\n".$aref->[0].":\t\t".$aref->[1].":\t\t".$aref->[2].":\t\t".$aref->[3]."\n"; 
+ $cur_tup_select   = $aref->[0];
+    $cur_tup_update  = $aref->[1];
+    $cur_tup_insert = $aref->[2];
+    $cur_tup_delete  = $aref->[3];
+
+}         
+
+
+   chomp ( $res );
+
+
+  
+#print "test:$res\n";  
+#    $res =~ s/COM_SELECT//g;
+#    $res =~ s/COM_UPDATE//g;
+#    $res =~ s/COM_INSERT//g;
+#    $res =~ s/COM_DELETE//g;
+    
+    
+#    my @split_a = split "\n", $res;
+#    my $split_1 = @split_a[1];
+#    my @values = split "\t", $split_1;
+  
+    
+    #$replace_title1 =~ s/COM_SELECT/ /g;  #제목 타이틀 삭제
+    #print "@values";   
+    #$cur_tup_select   = $values[0];
+    #$cur_tup_update  = $values[1];
+    #$cur_tup_insert = $values[2];
+    #$cur_tup_delete  = $values[3];
+    #print "result : $values[4]";
+}
+
+
+
+sub write_prev_dml
+{
+    open ( TMP, ">$tmp_file" ) or die "File Create Error.. $tmp_file\n";
+
+    printf TMP "%d,%d,%d,%d", $cur_tup_select, $cur_tup_insert, $cur_tup_update, $cur_tup_delete;
+    close ( TMP );
+}
+
+sub get_prev_dml
+{
+    if ( -f $tmp_file ) 
+    {
+        my $str = `cat $tmp_file`;
+        chomp ( $str );
+        
+        my @tup = split /,/, $str;
+        $prev_tup_select = $tup[0];
+        $prev_tup_insert = $tup[1];
+        $prev_tup_update = $tup[2];
+        $prev_tup_delete = $tup[3];
+    }
+}
+
+ 
+
+$dbh->disconnect;
